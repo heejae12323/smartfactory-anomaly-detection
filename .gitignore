@@ -27,7 +27,7 @@ Thumbs.db
 # Data (필요에 맞게 조정)
 data/
 *.csv
-*.txt
+
 
 # IDE
 .vscode/
