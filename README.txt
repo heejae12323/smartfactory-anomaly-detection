@@ -1,45 +1,50 @@
-Data Set: FD001
-Train trjectories: 100
-Test trajectories: 100
-Conditions: ONE (Sea Level)
-Fault Modes: ONE (HPC Degradation)
+CMAPSS 터보팬 엔진 데이터셋 요약 (Korean README)
+데이터셋 구성
+데이터셋    Train개수	  Test 개수   조건(Conditions)	   고장 모드(Fault Modes)
+FD001       100	        100         ONE (Sea Level)	    ONE (HPC Degradation)
+FD002	    260	        259	        SIX	                ONE (HPC Degradation)
+FD003	    100	        100	        ONE (Sea Level)	    TWO (HPC Degradation, Fan Degradation)
+FD004	    248	        249	        SIX	                TWO (HPC Degradation, Fan Degradation)
+실험 시나리오 (Experimental Scenario)
 
-Data Set: FD002
-Train trjectories: 260
-Test trajectories: 259
-Conditions: SIX 
-Fault Modes: ONE (HPC Degradation)
+각 데이터셋은 다변량(multivariate) 시계열의 집합입니다.
 
-Data Set: FD003
-Train trjectories: 100
-Test trajectories: 100
-Conditions: ONE (Sea Level)
-Fault Modes: TWO (HPC Degradation, Fan Degradation)
+각 시계열은 서로 다른 엔진(unit) 에서 수집되며, 같은 타입의 엔진 플릿(fleet)으로 간주할 수 있습니다.
 
-Data Set: FD004
-Train trjectories: 248
-Test trajectories: 249
-Conditions: SIX 
-Fault Modes: TWO (HPC Degradation, Fan Degradation)
+각 엔진은 서로 다른 초기 마모와 제조 편차를 가지고 시작하며, 이는 정상 범위로 간주됩니다(즉, 고장 아님).
 
+엔진 성능에 큰 영향을 주는 3개의 운영 조건(operational settings) 이 포함되어 있으며, 센서 노이즈가 존재합니다.
 
+훈련(Train) 시계열: 시작은 정상 상태이며, 어느 시점부터 고장이 발생해 고장(시스템 실패)에 도달할 때까지 진행됩니다.
 
-Experimental Scenario
+테스트(Test) 시계열: 고장에 도달하기 일정 시간 이전에서 종료됩니다.
 
-Data sets consists of multiple multivariate time series. Each data set is further divided into training and test subsets. Each time series is from a different engine � i.e., the data can be considered to be from a fleet of engines of the same type. Each engine starts with different degrees of initial wear and manufacturing variation which is unknown to the user. This wear and variation is considered normal, i.e., it is not considered a fault condition. There are three operational settings that have a substantial effect on engine performance. These settings are also included in the data. The data is contaminated with sensor noise.
+목표: 테스트 세트의 각 시계열에 대해 고장까지 남은 운전 사이클 수(RUL, Remaining Useful Life) 를 예측하는 것입니다. (테스트 데이터에 대한 정답 RUL 벡터가 제공됩니다.)
 
-The engine is operating normally at the start of each time series, and develops a fault at some point during the series. In the training set, the fault grows in magnitude until system failure. In the test set, the time series ends some time prior to system failure. The objective of the competition is to predict the number of remaining operational cycles before failure in the test set, i.e., the number of operational cycles after the last cycle that the engine will continue to operate. Also provided a vector of true Remaining Useful Life (RUL) values for the test data.
+파일 형식 및 컬럼 설명
 
-The data are provided as a zip-compressed text file with 26 columns of numbers, separated by spaces. Each row is a snapshot of data taken during a single operational cycle, each column is a different variable. The columns correspond to:
-1)	unit number
-2)	time, in cycles
-3)	operational setting 1
-4)	operational setting 2
-5)	operational setting 3
-6)	sensor measurement  1
-7)	sensor measurement  2
-...
-26)	sensor measurement  26
+데이터는 공백으로 구분된 26개 열의 텍스트 파일(zip 압축)로 제공됩니다.
 
+각 행은 단일 운전 사이클에서의 스냅샷이며, 각 열은 다른 변수를 나타냅니다.
 
-Reference: A. Saxena, K. Goebel, D. Simon, and N. Eklund, �Damage Propagation Modeling for Aircraft Engine Run-to-Failure Simulation�, in the Proceedings of the Ist International Conference on Prognostics and Health Management (PHM08), Denver CO, Oct 2008.
+열 구성(총 26열):
+
+unit 번호
+
+time(사이클)
+
+operational setting 1
+
+operational setting 2
+
+operational setting 3
+
+~ 26) 센서 측정값 21개 (즉, sensor_1 ~ sensor_21)
+
+참고: 인덱스 6~26까지가 센서 값이므로 총 21개 센서입니다. (열 번호 26은 센서 21번째에 해당)
+
+참고 문헌
+
+A. Saxena, K. Goebel, D. Simon, and N. Eklund,
+“Damage Propagation Modeling for Aircraft Engine Run-to-Failure Simulation,”
+Proceedings of the 1st International Conference on Prognostics and Health Management (PHM08), Denver, CO, Oct 2008.
