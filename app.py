@@ -1,11 +1,12 @@
+# app.py
 from dotenv import load_dotenv
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt  # (not used directly; kept for compatibility)
-import seaborn as sns  # (optional, not used but kept from original)
+import seaborn as sns  # (optional)
 from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import IsolationForest
-# 아래 LangChain 관련 import는 선택 기능(LLM 답변)에 사용
+# LLM (optional)
 from langchain_openai import ChatOpenAI  # (optional)
 from langchain.memory import ConversationBufferMemory  # (kept)
 from langchain.chains import ConversationChain  # (kept)
@@ -17,8 +18,6 @@ from plotly.subplots import make_subplots
 import numpy as np
 import glob
 from datetime import datetime
-import json
-import re
 from typing import Dict, List, Any, Optional, Tuple
 
 # =============================
@@ -31,7 +30,6 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Global CSS
 st.markdown(
     """
 <style>
@@ -80,6 +78,13 @@ st.markdown(
 """,
     unsafe_allow_html=True,
 )
+
+# =============================
+# Paths (works in local & Render)
+# =============================
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(BASE_DIR, "data")
+os.makedirs(DATA_DIR, exist_ok=True)
 
 # =============================
 # Helper: SmartFactoryLLMAnalyzer
@@ -224,7 +229,7 @@ with st.sidebar:
     else:
         st.markdown('<div class="status-warning">⚠️ API Key 설정 필요</div>', unsafe_allow_html=True)
 
-    # OpenAI LLM toggle
+    # LLM toggle
     if 'use_llm' not in st.session_state:
         st.session_state.use_llm = bool(api_key)
     st.session_state.use_llm = st.checkbox(
@@ -234,7 +239,7 @@ with st.sidebar:
         help="켜면 채팅/예상질문 응답을 OpenAI LLM이 생성합니다."
     )
 
-    # ---- 현재 시점/윈도우 설정 ----
+    # 시점/윈도우 설정
     st.markdown("### ⏱️ 분석 기준 시점")
     snapshot_pct = st.slider(
         "현재 시점 (수명 대비 %)", min_value=10, max_value=95, value=60, step=5,
@@ -248,6 +253,7 @@ with st.sidebar:
         "위험 장비 RUL 임계치", min_value=1, max_value=200, value=30, step=1
     )
 
+    # 데이터 선택
     st.markdown("### 📁 데이터 선택")
 
     data_source = st.radio(
@@ -259,62 +265,33 @@ with st.sidebar:
     uploaded_file = None
 
     if data_source == "📂 데이터 폴더에서 선택":
-        train_files = glob.glob("data/train_*.txt")
-        train_files = [os.path.basename(f) for f in train_files]
+        # data 폴더 내 파일 검색
+        train_files = sorted([os.path.basename(p) for p in glob.glob(os.path.join(DATA_DIR, "train_*.txt"))])
+        txt_files = sorted([os.path.basename(p) for p in glob.glob(os.path.join(DATA_DIR, "*.txt"))])
+        csv_files = sorted([os.path.basename(p) for p in glob.glob(os.path.join(DATA_DIR, "*.csv"))])
+        display_files = train_files or (txt_files + csv_files)
 
-        if train_files:
+        if display_files:
             st.markdown("#### 📊 사용 가능한 데이터 파일")
-            for file_name in train_files:
-                file_path = os.path.join("data", file_name)
-                if os.path.exists(file_path):
-                    file_size = os.path.getsize(file_path)
-                    if file_size > 5 * 1024 * 1024:
-                        size_color = "🔴"
-                    elif file_size > 2 * 1024 * 1024:
-                        size_color = "🟡"
-                    else:
-                        size_color = "🟢"
-                    st.markdown(f"{size_color} **{file_name}** ({file_size/1024:.1f}KB)")
+            for fname in display_files:
+                fpath = os.path.join(DATA_DIR, fname)
+                if os.path.exists(fpath):
+                    fsize_kb = os.path.getsize(fpath) / 1024
+                    st.markdown(f"• **{fname}** ({fsize_kb:.1f}KB)")
                 else:
-                    st.markdown(f"❌ **{file_name}** (파일 없음)")
+                    st.markdown(f"❌ **{fname}** (파일 없음)")
 
             st.markdown("---")
             selected_file = st.selectbox(
-                "🎯 분석할 Train 파일 선택:", train_files, help="분석할 train 데이터 파일을 선택하세요"
+                "🎯 분석할 파일 선택:", display_files, help="분석할 데이터 파일을 선택하세요"
             )
-
             if selected_file:
-                file_path = os.path.join("data", selected_file)
-                file_size = os.path.getsize(file_path)
-                # Dummy object to carry name/size (no read/seek)
-                uploaded_file = type("UploadedFile", (), {"name": selected_file, "size": file_size})()
+                fpath = os.path.join(DATA_DIR, selected_file)
+                fsize = os.path.getsize(fpath) if os.path.exists(fpath) else 0
+                uploaded_file = type("UploadedFile", (), {"name": selected_file, "size": fsize})()
         else:
-            st.warning("📁 data 폴더에 train_*.txt 파일을 찾을 수 없습니다.")
+            st.warning("📁 data 폴더에 사용할 수 있는 txt/csv 파일이 없습니다. 파일을 추가하거나 '파일 업로드'를 사용하세요.")
 
-        st.markdown("---")
-        st.markdown("#### 📁 전체 데이터 폴더 정보")
-        all_files = glob.glob("data/*.txt")
-        if all_files:
-            file_categories = {
-                "🚂 Train 데이터": [f for f in all_files if "train" in str(f).lower()],
-                "🧪 Test 데이터": [f for f in all_files if "test" in str(f).lower()],
-                "⏰ RUL 데이터": [f for f in all_files if "rul" in str(f).lower()],
-                "📄 기타": [
-                    f for f in all_files if not any(x in str(f).lower() for x in ["train", "test", "rul"])
-                ],
-            }
-            for category, files in file_categories.items():
-                if files:
-                    st.markdown(f"**{category}**")
-                    for file_path in files:
-                        file_name = os.path.basename(file_path)
-                        if os.path.exists(file_path):
-                            file_size = os.path.getsize(file_path)
-                            st.markdown(f"  • {file_name} ({file_size/1024:.1f}KB)")
-                        else:
-                            st.markdown(f"  • {file_name} (파일 없음)")
-        else:
-            st.info("📁 data 폴더가 비어있습니다.")
     else:
         uploaded_file = st.file_uploader(
             "센서 데이터 파일을 선택하세요", type=["txt", "csv"], help="CSV 또는 TXT 형식의 센서 데이터를 업로드하세요"
@@ -324,28 +301,24 @@ with st.sidebar:
             st.info(f"크기: {uploaded_file.size/1024:.1f}KB")
 
 # =============================
-# LLM Answer Helper (safe; no unterminated f-strings)
+# LLM Answer Helper
 # =============================
 def llm_answer(question: str, ctx: dict, api_key: str) -> str:
     """OpenAI(LangChain)로 답변 생성. 실패 시 규칙기반 폴백."""
     try:
-        from langchain_openai import ChatOpenAI
         llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.2, api_key=api_key)
-
         summary_lines = [
             f"- 총 장비: {ctx.get('total_units', 0)}대",
             f"- 평균 RUL: {ctx.get('avg_rul', 0):.1f}",
             f"- 위험 장비: {ctx.get('critical_units', 0)}대",
             f"- 이상 징후율: {ctx.get('anomaly_rate', 0):.2f}%",
         ]
-        summary = "\n".join(summary_lines)
-
-        prompt_lines = [
+        prompt = "\n".join([
             "당신은 스마트팩토리 설비 상태 분석 전문가입니다.",
             "다음 데이터 요약을 참고해 한국어로 간결하고 실무형 조언을 제시하세요.",
             "",
             "[데이터 요약]",
-            summary,
+            "\n".join(summary_lines),
             "",
             "[질문]",
             question,
@@ -354,15 +327,11 @@ def llm_answer(question: str, ctx: dict, api_key: str) -> str:
             "- 핵심 수치 1~2개 인용",
             "- 실행 가능한 권고 3개 이하",
             "- 마크다운으로 5~8줄",
-        ]
-        prompt = "\n".join(prompt_lines)
-
+        ])
         resp = llm.invoke(prompt)
         content = getattr(resp, "content", None)
         return content if content is not None else str(resp)
-
     except Exception as e:
-        # LLM 실패 시 규칙기반 답변으로 폴백
         fallback = (
             st.session_state.analyzer.analyze_question(question)
             if "analyzer" in st.session_state else ""
@@ -370,7 +339,7 @@ def llm_answer(question: str, ctx: dict, api_key: str) -> str:
         return f"(LLM 호출 실패: {e})\n\n{fallback}"
 
 # =============================
-# Helper: delimiter detection & snapshot
+# Helpers
 # =============================
 def _detect_separator_from_text(first_line: str) -> str:
     """첫 줄을 보고 구분자 추정."""
@@ -427,10 +396,8 @@ if uploaded_file is not None:
             if hasattr(uploaded_file, "read") and callable(getattr(uploaded_file, "read", None)) and hasattr(uploaded_file, "seek"):
                 uploaded_file.seek(0)
                 try:
-                    # pandas python engine can infer sep when sep=None
                     df = pd.read_csv(uploaded_file, sep=None, engine="python", header=None, encoding="utf-8")
                 except Exception:
-                    # Fallback: manual first-line detection
                     uploaded_file.seek(0)
                     content = uploaded_file.read().decode("utf-8", errors="ignore")
                     lines = content.splitlines()
@@ -440,7 +407,7 @@ if uploaded_file is not None:
                     df = pd.read_csv(StringIO(content), sep=sep, header=None, engine="python", encoding="utf-8")
             # Case B: Local file chosen from folder (no read/seek)
             else:
-                file_path = os.path.join("data", uploaded_file.name)
+                file_path = os.path.join(DATA_DIR, uploaded_file.name)
                 with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
                     first_line = f.readline().strip()
                 sep = _detect_separator_from_text(first_line)
@@ -468,19 +435,13 @@ if uploaded_file is not None:
                     st.error("데이터 처리 후 유효한 행이 없습니다.")
                     st.stop()
 
-                # === 여기부터 추가: unit/time 타입 강제 & 정렬 ===
+                # unit/time 강제 정수 & 정렬
                 df["unit"] = pd.to_numeric(df["unit"], errors="coerce").astype("Int64")
                 df["time"] = pd.to_numeric(df["time"], errors="coerce").astype("Int64")
-                # 타입 강제 후 혹시 생긴 NaN 방어
                 df = df.dropna(subset=["unit", "time"])
-                if df.empty:
-                    st.error("unit/time 정제 후 유효한 행이 없습니다.")
-                    st.stop()
-                # 진짜 정수로 확정 + 정렬
                 df["unit"] = df["unit"].astype(int)
                 df["time"] = df["time"].astype(int)
                 df = df.sort_values(["unit", "time"]).reset_index(drop=True)
-                # === 추가 끝 ===
 
             except Exception as e:
                 st.error(f"데이터 전처리 중 오류: {str(e)}")
@@ -511,37 +472,31 @@ if uploaded_file is not None:
 
                     if len(selected_sensors) > 0:
                         try:
-                            sensor_data = df[selected_sensors].copy()
-                            sensor_data = sensor_data.fillna(sensor_data.mean())
+                            sensor_data = df[selected_sensors].copy().fillna(method="ffill").fillna(method="bfill")
                             scaler = StandardScaler()
                             df_scaled = scaler.fit_transform(sensor_data)
                             iso = IsolationForest(n_estimators=100, contamination=0.05, random_state=42)
                             df['anomaly'] = iso.fit_predict(df_scaled)
 
-                            # ===== Dashboard Metrics (스냅샷 기준) =====
+                            # ===== Snapshot/Window =====
                             st.markdown("## 📊 실시간 모니터링 대시보드")
-
-                            # 현재시점 스냅샷/윈도우 데이터
                             snap_df, win_df = make_snapshot(df, pct=int(snapshot_pct), window=int(anom_window))
 
-                            # 스냅샷이 비는 경우 방어 로직 (time_snap이 너무 작거나 타입 문제일 때)
                             if len(snap_df) == 0:
-                                # 각 unit의 최솟값 1행이라도 현재시점으로 간주
+                                # 최소 보정
                                 snap_df = df.sort_values(["unit", "time"]).groupby("unit").head(1).copy()
-                                # 윈도우도 최소로 재구성
                                 win_df = df.merge(
                                     snap_df[["unit", "time"]].rename(columns={"time": "snap_time"}),
                                     on="unit", how="left"
                                 )
-                                win_df = win_df[(win_df["time"] <= win_df["snap_time"]) & (win_df["time"] >= win_df["snap_time"] - int(anom_window) + 1)].copy()
+                                win_df = win_df[
+                                    (win_df["time"] <= win_df["snap_time"]) &
+                                    (win_df["time"] >= win_df["snap_time"] - int(anom_window) + 1)
+                                ].copy()
 
-                            # 총 장비(스냅샷에 실제로 존재하는 유닛 기준)
                             total_units = int(snap_df["unit"].nunique())
-
-                            # 위험 장비: 현재시점 RUL < 임계치
                             critical_units_now = int((snap_df["RUL"] < int(critical_rul_thresh)).sum())
 
-                            # 이상 카운트/율: 현재시점 직전 window 구간에서만 계산
                             if "anomaly" in win_df.columns and len(win_df) > 0:
                                 anomaly_count = int((win_df["anomaly"] == -1).sum())
                                 total_count = int(len(win_df))
@@ -549,10 +504,8 @@ if uploaded_file is not None:
                             else:
                                 anomaly_count, total_count, anomaly_rate = 0, 0, 0.0
 
-                            # 평균 RUL: 현재시점 기준
                             avg_rul_now = float(snap_df["RUL"].mean()) if len(snap_df) > 0 else 0.0
 
-                            # 카드 4개
                             c1, c2, c3, c4 = st.columns(4)
                             with c1:
                                 st.markdown(
@@ -598,7 +551,7 @@ if uploaded_file is not None:
                             st.markdown("---")
                             st.success("✅ 데이터가 성공적으로 분석되었습니다!")
 
-                            # === Hook up AI Analyzer Context ===
+                            # unit_status (최근 윈도우 기준)
                             unit_status_now = (
                                 win_df.assign(is_ano=(win_df.get("anomaly", 1) == -1).astype(int))
                                 .groupby("unit", as_index=False)
@@ -613,26 +566,16 @@ if uploaded_file is not None:
                                 unit_status_now = pd.DataFrame(columns=["unit", "RUL", "time", "anomaly_count", "anomaly_rate"])
 
                             # 컨텍스트 갱신
-                            st.session_state.analyzer.update_context(
-                                df.assign(_is_window=df["time"].isin(win_df["time"]) & df["unit"].isin(win_df["unit"])),
-                                unit_status=unit_status_now
-                            )
+                            st.session_state.analyzer.update_context(df, unit_status=unit_status_now)
                             st.session_state.analysis_complete = True
 
-                            # 디버그용(잠깐 확인해보고 필요없으면 지워도 됨)
-                            st.caption(
-                                f"snapshot%={snapshot_pct}, window={anom_window}, 임계치={critical_rul_thresh} | "
-                                f"df_units={df['unit'].nunique()}, snap_units={snap_df['unit'].nunique()}, win_rows={len(win_df)}"
-                            )
+                            # 시각화용 저장
+                            st.session_state.df = df
+                            st.session_state.snap_df = snap_df
+                            st.session_state.win_df = win_df
+                            st.session_state.selected_sensors = selected_sensors
 
-                            # === Hook up AI Analyzer Context ===
-                            st.session_state.analyzer.update_context(
-                                df.assign(_is_window=df["time"].isin(win_df["time"]) & df["unit"].isin(win_df["unit"])),
-                                unit_status=unit_status_now
-                            )
-                            st.session_state.analysis_complete = True
-
-                            # Basic data info (snapshot/window)
+                            # 데이터 정보
                             st.markdown("### 📋 데이터 정보")
                             i1, i2, i3 = st.columns(3)
                             with i1:
@@ -645,18 +588,6 @@ if uploaded_file is not None:
                         except Exception as e:
                             st.error(f"이상 탐지 중 오류 발생: {str(e)}")
                             st.info("기본 통계 분석으로 진행합니다.")
-
-                            st.markdown("## 📊 기본 데이터 분석")
-                            c1, c2, c3, c4 = st.columns(4)
-                            with c1:
-                                st.metric("총 장비", f"{int(df['unit'].nunique())}대")
-                            with c2:
-                                st.metric("총 데이터", f"{len(df)}건")
-                            with c3:
-                                st.metric("평균 RUL", f"{float(df['RUL'].mean()):.1f}")
-                            with c4:
-                                st.metric("위험 장비", f"{int(df[df['RUL'] < 30]['unit'].nunique())}대")
-
                             st.session_state.analyzer.update_context(df, None)
                             st.session_state.analysis_complete = True
                     else:
@@ -665,7 +596,6 @@ if uploaded_file is not None:
                         st.markdown("### 📋 데이터 구조")
                         st.write(f"데이터 크기: {df.shape}")
                         st.write(f"컬럼: {list(df.columns)}")
-                        st.markdown("### 👀 샘플 데이터")
                         st.dataframe(df.head())
                 except Exception as e:
                     st.error(f"RUL 계산 중 오류 발생: {str(e)}")
@@ -758,14 +688,10 @@ else:
             st.markdown(
                 """
                 **🔍 분석 순서:**
-                1. 데이터 폴더에서 train 파일 선택
+                1. 데이터 폴더에서 파일 선택 또는 업로드
                 2. 자동 컬럼 인식 및 RUL 계산
                 3. 이상 탐지 알고리즘 실행
                 4. 시각화 및 AI 분석
-                
-                **⚠️ 주의사항:**
-                - 대용량 파일은 로딩 시간이 오래 걸릴 수 있음
-                - 메모리 부족 시 파일 크기 확인 필요
                 """
             )
 
@@ -773,7 +699,7 @@ else:
 # AI Assistant Tabs
 # =============================
 st.markdown("---")
-main_tabs = st.tabs(["💬 AI 대화", "📈 인사이트", "❓ 예상 질문"])
+main_tabs = st.tabs(["💬 AI 대화", "📈 인사이트", "📊 시각화", "❓ 예상 질문"])
 
 with main_tabs[0]:
     st.markdown("## 💬 AI 분석가와 대화하기")
@@ -907,6 +833,84 @@ with main_tabs[1]:
         st.info("📊 분석 데이터가 없습니다. 먼저 데이터를 로드하거나 샘플 데이터를 사용하세요.")
 
 with main_tabs[2]:
+    st.markdown("## 📊 시각화")
+
+    if st.session_state.get("df") is None or st.session_state.get("snap_df") is None:
+        st.info("먼저 데이터를 분석해주세요. (사이드바에서 파일 선택 또는 업로드)")
+    else:
+        df_all = st.session_state.df
+        snap_df = st.session_state.snap_df
+        win_df = st.session_state.win_df
+        sel_sensors = st.session_state.get("selected_sensors", [])
+
+        # --- RUL 분포 (현재 시점) ---
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.subheader("현재 시점 RUL 분포")
+            if len(snap_df) > 0:
+                fig = px.histogram(snap_df, x="RUL", nbins=30, title="RUL Histogram (snapshot)")
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.warning("스냅샷 데이터가 비어 있습니다.")
+
+        # --- 유닛별 이상율 Top20 ---
+        with col_b:
+            st.subheader("유닛별 이상율 (최근 윈도우)")
+            ust_list = st.session_state.analyzer.analysis_context.get("unit_status", [])
+            if ust_list:
+                ust_df = pd.DataFrame(ust_list)
+                top = ust_df.sort_values("anomaly_rate", ascending=False).head(20)
+                fig = px.bar(top, x="unit", y="anomaly_rate", title="Anomaly Rate by Unit (Top 20)")
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("이상율 정보가 없습니다.")
+
+        st.markdown("---")
+        st.subheader("센서 트렌드 (유닛 선택)")
+
+        # --- 센서 트렌드: 유닛/센서 선택 후 라인 ---
+        units = sorted(df_all["unit"].unique().tolist())
+        sel_unit = st.selectbox("유닛 선택", units, index=0)
+        options = sel_sensors or [c for c in df_all.columns if c.startswith("sensor_")]
+        default_sel = options[:3] if options else []
+        sel_cols = st.multiselect("센서 선택 (여러 개 선택 가능)", options, default=default_sel)
+
+        unit_df = df_all[df_all["unit"] == sel_unit].sort_values("time")
+        if len(sel_cols) == 0:
+            st.info("센서를 선택해주세요.")
+        else:
+            fig = go.Figure()
+            for c in sel_cols:
+                if c in unit_df.columns:
+                    fig.add_trace(go.Scatter(x=unit_df["time"], y=unit_df[c], mode="lines", name=c))
+            fig.update_layout(title=f"Unit {sel_unit} 센서 추이", xaxis_title="time (cycle)", yaxis_title="value")
+            st.plotly_chart(fig, use_container_width=True)
+
+        # --- 이상치 타임라인 (baseline 센서 위에 마커) ---
+        if "anomaly" in unit_df.columns:
+            st.subheader("이상치 타임라인")
+            # baseline으로 첫 번째 선택 센서 또는 sensor_1 사용
+            baseline_col = sel_cols[0] if sel_cols else ("sensor_1" if "sensor_1" in unit_df.columns else None)
+            if baseline_col is not None:
+                fig2 = go.Figure()
+                fig2.add_trace(go.Scatter(
+                    x=unit_df["time"], y=unit_df[baseline_col], mode="lines", name=baseline_col
+                ))
+                an_idx = unit_df["anomaly"] == -1
+                if an_idx.any():
+                    fig2.add_trace(go.Scatter(
+                        x=unit_df.loc[an_idx, "time"],
+                        y=unit_df.loc[an_idx, baseline_col],
+                        mode="markers",
+                        marker=dict(symbol="x", size=10),
+                        name="anomaly"
+                    ))
+                fig2.update_layout(title=f"Unit {sel_unit} anomaly markers on {baseline_col}")
+                st.plotly_chart(fig2, use_container_width=True)
+            else:
+                st.info("표시할 기준 센서가 없습니다.")
+
+with main_tabs[3]:
     st.markdown("## ❓ 예상 질문 및 빠른 분석")
     if st.session_state.analysis_complete:
         questions = st.session_state.analyzer.generate_questions()
